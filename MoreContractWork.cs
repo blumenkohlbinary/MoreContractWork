@@ -32,49 +32,69 @@ namespace MoreContractWork
 
         private Harmony harmony;
 
+        // ---- Spracherkennung -----------------------------------------------
+        // Prueft settingsScript.language (0=EN, 1=DE) und faellt auf OS-Sprache
+        // zurueck, falls settingsScript noch nicht geladen ist.
+        private static bool IsGerman()
+        {
+            var s = UnityEngine.Object.FindObjectOfType<settingsScript>();
+            if (s != null) return s.language == 1;
+            return Application.systemLanguage == SystemLanguage.German;
+        }
+
         private void Awake()
         {
             Logger = base.Logger;
+            bool de = IsGerman();
 
             // --- Auftragsvolumen ------------------------------------------
             MaxContracts = Config.Bind(
                 "Auftragsarbeit", "Max gleichzeitige Auftraege", 40,
                 new ConfigDescription(
-                    "Maximale Anzahl gleichzeitiger Auftraege (Vanilla: 20)",
+                    de  ? "Maximale Anzahl gleichzeitiger Auftraege (Vanilla: 20)"
+                        : "Maximum number of simultaneous contract offers (Vanilla: 20)",
                     new AcceptableValueRange<int>(5, 200)));
 
             ContractsPerWeek = Config.Bind(
                 "Auftragsarbeit", "Neue Auftraege pro Woche", 5,
                 new ConfigDescription(
-                    "Wie viele neue Auftraege pro Woche versucht werden zu spawnen.\n" +
-                    "Deckt alle Studio-Typen ab: Entwicklung, QA, Grafik, Sound, Produktion, Werkstatt, Konsolenentwicklung.\n" +
-                    "Vanilla: 1 (mit ~20%% Chance)",
+                    de  ? "Wie viele neue Auftraege pro Woche versucht werden zu spawnen.\n" +
+                          "Deckt alle Studio-Typen ab: Entwicklung, QA, Grafik, Sound, Produktion, Werkstatt, Konsolenentwicklung.\n" +
+                          "Vanilla: 1 (mit ~20%% Chance)"
+                        : "How many new contract offers attempt to spawn per in-game week.\n" +
+                          "Covers all studio types: Development, QA, Graphics, Sound, Production, Workshop, Console Dev.\n" +
+                          "Vanilla: 1 (with ~20%% chance)",
                     new AcceptableValueRange<int>(1, 30)));
 
             SpawnThreshold = Config.Bind(
                 "Auftragsarbeit", "Spawn-Schwellenwert", 40f,
                 new ConfigDescription(
-                    "Steuert den 1. Vanilla-Spawn: niedriger = hoehere Chance (Vanilla: 80).\n" +
-                    "Die zusaetzlichen Auftraege (Neue Auftraege pro Woche) ignorieren diesen Wert.",
+                    de  ? "Steuert den 1. Vanilla-Spawn: niedriger = hoehere Chance (Vanilla: 80).\n" +
+                          "Die zusaetzlichen Auftraege (Neue Auftraege pro Woche) ignorieren diesen Wert."
+                        : "Controls the vanilla spawn chance: lower = higher chance (Vanilla: 80).\n" +
+                          "Additional contracts (Contracts Per Week) ignore this value.",
                     new AcceptableValueRange<float>(0f, 100f)));
 
             OfferLifetimeWeeks = Config.Bind(
                 "Auftragsarbeit", "Angebots-Lebensdauer Wochen", 32,
                 new ConfigDescription(
-                    "Wochen bevor nicht-angenommene Auftraege verschwinden koennen (Vanilla: 16)",
+                    de  ? "Wochen bevor nicht-angenommene Auftraege verschwinden koennen (Vanilla: 16)"
+                        : "Weeks before unaccepted contract offers can expire (Vanilla: 16)",
                     new AcceptableValueRange<int>(4, 200)));
 
             // --- Verguetung -----------------------------------------------
             RewardMultiplier = Config.Bind(
                 "Verguetung", "Verguetungs-Multiplikator", 1.0f,
                 new ConfigDescription(
-                    "Multiplikator fuer Auftragsverguetung (1.0 = Vanilla)",
+                    de  ? "Multiplikator fuer Auftragsverguetung (1.0 = Vanilla)"
+                        : "Multiplier applied to contract payment (1.0 = vanilla)",
                     new AcceptableValueRange<float>(0.1f, 10.0f)));
 
             PenaltyMultiplier = Config.Bind(
                 "Verguetung", "Strafen-Multiplikator", 1.0f,
                 new ConfigDescription(
-                    "Multiplikator fuer Strafzahlung bei Vertragsbruch (1.0 = Vanilla)",
+                    de  ? "Multiplikator fuer Strafzahlung bei Vertragsbruch (1.0 = Vanilla)"
+                        : "Multiplier applied to penalty on contract breach (1.0 = vanilla)",
                     new AcceptableValueRange<float>(0.0f, 5.0f)));
 
             // ---- Harmony patchen -----------------------------------------
