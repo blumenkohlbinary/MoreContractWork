@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net46</TargetFramework>
+    <AssemblyName>MoreContractWork</AssemblyName>
+    <RootNamespace>MoreContractWork</RootNamespace>
+    <Description>Mehr Auftragsarbeit fuer Mad Games Tycoon 2 – konfigurierbare Limits und Verguetung</Description>
+    <Version>1.0.0</Version>
+    <!-- BepInEx erwartet AnyCPU, auch wenn das Spiel x64 ist -->
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Optimize>true</Optimize>
+    <!-- Kein CopyLocal fuer Referenzen – Plugin-DLL muss schlank bleiben -->
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <!-- Ausgabepfad: bin/Release/net46/ -->
+    <OutDir>bin\Release\net46\</OutDir>
+    <!-- Nach erfolgreichem Build direkt ins Plugin-Verzeichnis kopieren -->
+    <PostBuildCopyPath>..\BepInEx\plugins\MoreContractWork\</PostBuildCopyPath>
+  </PropertyGroup>
+
+  <!-- NuGet: BepInEx 5.x + Unity 2022 -->
+  <ItemGroup>
+    <PackageReference Include="BepInEx.Analyzers"      Version="1.*" PrivateAssets="all" />
+    <PackageReference Include="BepInEx.Core"           Version="5.*" />
+    <PackageReference Include="BepInEx.PluginInfoProps" Version="1.*" />
+    <PackageReference Include="UnityEngine.Modules"    Version="2022.3.2" IncludeAssets="compile" />
+  </ItemGroup>
+
+  <!-- Spiel-Assemblies aus lib/ (nicht ins Plugin kopieren) -->
+  <ItemGroup>
+    <!-- netstandard.dll wird benoetigt weil Assembly-CSharp.dll aus Unity 2022 netstandard 2.1 referenziert -->
+    <Reference Include="netstandard">
+      <HintPath>lib\netstandard.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>lib\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Nach Build: DLL ins Plugin-Verzeichnis kopieren -->
+  <Target Name="DeployPlugin" AfterTargets="Build">
+    <MakeDir Directories="$(PostBuildCopyPath)" />
+    <Copy SourceFiles="$(OutDir)$(AssemblyName).dll"
+          DestinationFolder="$(PostBuildCopyPath)"
+          SkipUnchangedFiles="true" />
+    <Message Text="Plugin deployed: $(PostBuildCopyPath)$(AssemblyName).dll" Importance="high" />
+  </Target>
+
+</Project>
