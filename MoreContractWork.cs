@@ -32,102 +32,49 @@ namespace MoreContractWork
 
         private Harmony harmony;
 
-        // ---- Spracherkennung -----------------------------------------------
-        // 3-stufige Erkennung der Spielsprache:
-        //   1) settingsScript.language  (verfuegbar sobald Spiel geladen)
-        //   2) settings.txt direkt lesen (ES3 JSON, verfuegbar ab erstem Start)
-        //   3) OS-Sprache als letzter Fallback
-        // settings_int[0] = language  (0=EN, 1=DE, 2=TR, 3=CH, 4=FR, ...)
-        private static bool IsGerman()
-        {
-            try
-            {
-                var s = UnityEngine.Object.FindObjectOfType<settingsScript>();
-                if (s != null) return s.language == 1;
-
-                string path = System.IO.Path.Combine(
-                    Application.persistentDataPath, "settings.txt");
-                if (System.IO.File.Exists(path))
-                {
-                    string json = System.IO.File.ReadAllText(path,
-                        System.Text.Encoding.UTF8);
-                    // ES3-Format: {"settings_int":{"__type":"int[]","value":[LANG,...
-                    int keyIdx = json.IndexOf("\"settings_int\"",
-                        System.StringComparison.Ordinal);
-                    if (keyIdx >= 0)
-                    {
-                        int valIdx = json.IndexOf("\"value\":[", keyIdx,
-                            System.StringComparison.Ordinal);
-                        if (valIdx >= 0)
-                        {
-                            valIdx += 9; // skip "value":[
-                            int end = json.IndexOfAny(new[] { ',', ']' }, valIdx);
-                            if (end > valIdx && int.TryParse(
-                                json.Substring(valIdx, end - valIdx).Trim(),
-                                out int lang))
-                                return lang == 1;
-                        }
-                    }
-                }
-            }
-            catch { }
-
-            return Application.systemLanguage == SystemLanguage.German;
-        }
-
         private void Awake()
         {
             Logger = base.Logger;
-            bool de = IsGerman();
 
-            // --- Auftragsvolumen ------------------------------------------
+            // --- Contract Volume ------------------------------------------
             MaxContracts = Config.Bind(
-                "Auftragsarbeit", "Max gleichzeitige Auftraege", 40,
+                "Contract Work", "Max Active Contracts", 40,
                 new ConfigDescription(
-                    de  ? "Maximale Anzahl gleichzeitiger Auftraege (Vanilla: 20)"
-                        : "Maximum number of simultaneous contract offers (Vanilla: 20)",
+                    "Maximum number of simultaneous contract offers on the board (Vanilla: 20)",
                     new AcceptableValueRange<int>(5, 200)));
 
             ContractsPerWeek = Config.Bind(
-                "Auftragsarbeit", "Neue Auftraege pro Woche", 5,
+                "Contract Work", "Contracts Per Week", 5,
                 new ConfigDescription(
-                    de  ? "Wie viele neue Auftraege pro Woche versucht werden zu spawnen.\n" +
-                          "Deckt alle Studio-Typen ab: Entwicklung, QA, Grafik, Sound, Produktion, Werkstatt, Konsolenentwicklung.\n" +
-                          "Vanilla: 1 (mit ~20%% Chance)"
-                        : "How many new contract offers attempt to spawn per in-game week.\n" +
-                          "Covers all studio types: Development, QA, Graphics, Sound, Production, Workshop, Console Dev.\n" +
-                          "Vanilla: 1 (with ~20%% chance)",
+                    "How many new contract offers attempt to spawn per in-game week.\n" +
+                    "Covers all studio types: Development, QA, Graphics, Sound, Production, Workshop, Console Dev.\n" +
+                    "Vanilla: 1 (with ~20%% chance)",
                     new AcceptableValueRange<int>(1, 30)));
 
             SpawnThreshold = Config.Bind(
-                "Auftragsarbeit", "Spawn-Schwellenwert", 40f,
+                "Contract Work", "Spawn Threshold", 40f,
                 new ConfigDescription(
-                    de  ? "Steuert den 1. Vanilla-Spawn: niedriger = hoehere Chance (Vanilla: 80).\n" +
-                          "Die zusaetzlichen Auftraege (Neue Auftraege pro Woche) ignorieren diesen Wert."
-                        : "Controls the vanilla spawn chance: lower = higher chance (Vanilla: 80).\n" +
-                          "Additional contracts (Contracts Per Week) ignore this value.",
+                    "Controls the vanilla spawn chance: lower = higher chance (Vanilla: 80).\n" +
+                    "Additional contracts (Contracts Per Week) ignore this value.",
                     new AcceptableValueRange<float>(0f, 100f)));
 
             OfferLifetimeWeeks = Config.Bind(
-                "Auftragsarbeit", "Angebots-Lebensdauer Wochen", 32,
+                "Contract Work", "Offer Lifetime Weeks", 32,
                 new ConfigDescription(
-                    de  ? "Wochen bevor nicht-angenommene Auftraege verschwinden koennen (Vanilla: 16)"
-                        : "Weeks before unaccepted contract offers can expire (Vanilla: 16)",
+                    "Weeks before unaccepted contract offers can expire (Vanilla: 16)",
                     new AcceptableValueRange<int>(4, 200)));
 
-            // --- Verguetung -----------------------------------------------
+            // --- Payment --------------------------------------------------
             RewardMultiplier = Config.Bind(
-                "Verguetung", "Verguetungs-Multiplikator", 1.0f,
+                "Payment", "Reward Multiplier", 1.0f,
                 new ConfigDescription(
-                    de  ? "Multiplikator fuer Auftragsverguetung (1.0 = Vanilla)"
-                        : "Multiplier applied to contract payment (1.0 = vanilla)",
+                    "Multiplier applied to contract payment (1.0 = vanilla)",
                     new AcceptableValueRange<float>(0.1f, 10.0f)));
 
             PenaltyMultiplier = Config.Bind(
-                "Verguetung", "Strafen-Multiplikator", 1.0f,
+                "Payment", "Penalty Multiplier", 1.0f,
                 new ConfigDescription(
-                    de  ? "Multiplikator fuer Strafzahlung bei Vertragsbruch (1.0 = Vanilla)"
-                        : "Multiplier applied to penalty on contract breach (1.0 = vanilla)",
+                    "Multiplier applied to penalty on contract breach (1.0 = vanilla)",
                     new AcceptableValueRange<float>(0.0f, 5.0f)));
 
             // ---- Harmony patchen -----------------------------------------
