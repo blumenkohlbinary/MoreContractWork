@@ -4,6 +4,7 @@ using BepInEx.Logging;
 using HarmonyLib;
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Reflection.Emit;
 using UnityEngine;
 using URandom = UnityEngine.Random;
@@ -11,16 +12,18 @@ using URandom = UnityEngine.Random;
 namespace MoreContractWork
 {
     [BepInPlugin(PLUGIN_GUID, PLUGIN_NAME, PLUGIN_VERSION)]
+    [BepInProcess("Mad Games Tycoon 2.exe")]
     public class Plugin : BaseUnityPlugin
     {
         public const string PLUGIN_GUID    = "tobi.Mad_Games_Tycoon_2.plugins.MoreContractWork";
         public const string PLUGIN_NAME    = "More Contract Work";
-        public const string PLUGIN_VERSION = "1.2.0";
+        public const string PLUGIN_VERSION = "1.3.0";
 
         internal static new ManualLogSource Logger;
 
         // ---- Config --------------------------------------------------------
 
+        public static ConfigEntry<bool>  Enabled;
         public static ConfigEntry<int>   MaxContracts;
         public static ConfigEntry<float> SpawnThreshold;
         public static ConfigEntry<int>   OfferLifetimeWeeks;
@@ -33,6 +36,10 @@ namespace MoreContractWork
         private void Awake()
         {
             Logger = base.Logger;
+
+            Enabled = Config.Bind(
+                "General", "Enabled", true,
+                "Enable or disable the mod entirely.");
 
             // --- Contract Volume ------------------------------------------
             MaxContracts = Config.Bind(
@@ -102,8 +109,10 @@ namespace MoreContractWork
     //
     // Replaces 3 constants in the vanilla spawner IL code:
     //   (1) ldc.i4.s 20 before bge  -> MaxContracts
-    //   (2) ldc.r4 80f              -> SpawnThreshold
+    //   (2) ldc.r4 80f (threshold)  -> SpawnThreshold
     //   (3) ldc.i4.s 16 before ble  -> OfferLifetimeWeeks
+    //
+    // Helper methods return vanilla defaults when Enabled = false.
     // ========================================================================
     [HarmonyPatch(typeof(contractWorkMain), "UpdateContractWork")]
     public class Patch_UpdateContractWork
@@ -129,11 +138,15 @@ namespace MoreContractWork
                     patched++;
                 }
 
-                // PATCH 2: Spawn threshold  (only ldc.r4 80f in the method)
+                // PATCH 2: Spawn threshold  (ldc.r4 80f followed by comparison, not arithmetic)
                 if (codes[i].opcode == OpCodes.Ldc_R4
                     && codes[i].operand is float fVal
                     && Math.Abs(fVal - 80f) < 0.01f)
                 {
+                    // Context check: skip if next opcode is arithmetic (80f used in calculation)
+                    if (i + 1 < codes.Count && IsArithmeticOp(codes[i + 1].opcode))
+                        continue;
+
                     codes[i] = new CodeInstruction(OpCodes.Call,
                         typeof(Patch_UpdateContractWork).GetMethod(nameof(GetSpawnThreshold)));
                     patched++;
@@ -159,9 +172,17 @@ namespace MoreContractWork
             return codes;
         }
 
-        public static int   GetMaxContracts()   => Plugin.MaxContracts.Value;
-        public static float GetSpawnThreshold() => Plugin.SpawnThreshold.Value;
-        public static int   GetOfferLifetime()  => Plugin.OfferLifetimeWeeks.Value;
+        private static bool IsArithmeticOp(OpCode op)
+        {
+            return op == OpCodes.Mul || op == OpCodes.Div
+                || op == OpCodes.Add || op == OpCodes.Sub
+                || op == OpCodes.Rem;
+        }
+
+        // Return vanilla defaults when mod is disabled
+        public static int   GetMaxContracts()   => Plugin.Enabled.Value ? Plugin.MaxContracts.Value : 20;
+        public static float GetSpawnThreshold() => Plugin.Enabled.Value ? Plugin.SpawnThreshold.Value : 80f;
+        public static int   GetOfferLifetime()  => Plugin.Enabled.Value ? Plugin.OfferLifetimeWeeks.Value : 16;
     }
 
     // ========================================================================
@@ -171,8 +192,8 @@ namespace MoreContractWork
     // This postfix creates up to (ContractsPerWeek - 1) additional ones
     // by replicating the exact initialization logic from the vanilla IL.
     //
-    // All contractWork fields are public; only the private
-    // contractWorkMain fields are accessed via Harmony Traverse.
+    // All contractWork fields are public; the private contractWorkMain
+    // fields are accessed via cached FieldInfo/MethodInfo (no Traverse).
     //
     // Supported contract types (art):
     //   0 = Development   (always available)
@@ -187,137 +208,152 @@ namespace MoreContractWork
     [HarmonyPatch(typeof(contractWorkMain), "UpdateContractWork")]
     public class Patch_SpawnExtra
     {
-        [HarmonyPostfix]
-        public static void Postfix(contractWorkMain __instance)
+        // Cached reflection metadata (populated once in static ctor)
+        private static readonly FieldInfo  _fForschung;
+        private static readonly FieldInfo  _fUnlock;
+        private static readonly FieldInfo  _fTS;
+        private static readonly FieldInfo  _fMS;
+        private static readonly MethodInfo _mGetPublisher;
+        private static readonly object[]   _noArgs = new object[0];
+
+        static Patch_SpawnExtra()
         {
-            int extra = Plugin.ContractsPerWeek.Value - 1;
-            if (extra <= 0) return;
+            const BindingFlags priv = BindingFlags.NonPublic | BindingFlags.Instance;
+            var t = typeof(contractWorkMain);
+            _fForschung    = t.GetField("forschungSonstiges_", priv);
+            _fUnlock       = t.GetField("unlock_", priv);
+            _fTS           = t.GetField("tS_", priv);
+            _fMS           = t.GetField("mS_", priv);
+            _mGetPublisher = t.GetMethod("GetRandomPublisherID", priv);
+        }
 
-            // Retrieve private fields via Traverse (once per call)
-            var tv        = Traverse.Create(__instance);
-            var forschung = tv.Field<forschungSonstiges>("forschungSonstiges_").Value;
-            var unlock    = tv.Field<unlockScript>("unlock_").Value;
-            var tS        = tv.Field<textScript>("tS_").Value;
-            var mS        = tv.Field<mainScript>("mS_").Value;
-
-            if (forschung == null || unlock == null || tS == null || mS == null)
+        [HarmonyPostfix]
+        public static void Postfix(contractWorkMain __instance, bool forceNewContract)
+        {
+            try
             {
-                Plugin.Logger.LogWarning("SpawnExtra: Could not read private fields - skipping.");
-                return;
+                if (!Plugin.Enabled.Value) return;
+
+                // forceNewContract = special event / tutorial -> don't pile on extras
+                if (forceNewContract) return;
+
+                int extra = Plugin.ContractsPerWeek.Value - 1;
+                if (extra <= 0) return;
+
+                // Verify cached reflection is valid
+                if (_fForschung == null || _fUnlock == null
+                    || _fTS == null || _fMS == null || _mGetPublisher == null)
+                {
+                    Plugin.Logger.LogWarning("SpawnExtra: Reflection cache incomplete - game API changed?");
+                    return;
+                }
+
+                var forschung = (forschungSonstiges)_fForschung.GetValue(__instance);
+                var unlock    = (unlockScript)_fUnlock.GetValue(__instance);
+                var tS        = (textScript)_fTS.GetValue(__instance);
+                var mS        = (mainScript)_fMS.GetValue(__instance);
+
+                if (forschung == null || unlock == null || tS == null || mS == null)
+                {
+                    Plugin.Logger.LogWarning("SpawnExtra: Private field values are null - skipping.");
+                    return;
+                }
+
+                int currentCount = GameObject.FindGameObjectsWithTag("ContractWork").Length;
+                int maxContracts = Plugin.MaxContracts.Value;
+
+                int spawned = 0;
+                for (int i = 0; i < extra; i++)
+                {
+                    if (currentCount + spawned >= maxContracts) break;
+
+                    // ---- Create new contractWork object -----------------------
+                    contractWork cw = __instance.CreateContractWork();
+                    if (cw == null) continue;
+
+                    // ---- Unique random ID -------------------------------------
+                    cw.myID = URandom.Range(1, 999999999);
+
+                    // ---- Determine contract type (art) ------------------------
+                    int art = 0;
+                    switch (URandom.Range(0, 8))
+                    {
+                        case 0: art = 0; break;
+                        case 1: art = forschung.IsErforscht(28) ? 1 : 0; break; // QA
+                        case 2: art = forschung.IsErforscht(31) ? 2 : 0; break; // Graphics
+                        case 3: art = forschung.IsErforscht(32) ? 3 : 0; break; // Sound
+                        case 4: art = unlock.Get(8)             ? 4 : 0; break; // Hardware
+                        case 5: art = forschung.IsErforscht(33) ? 5 : 0; break; // Production
+                        case 6: art = forschung.IsErforscht(38) ? 6 : 0; break; // Workshop
+                        case 7: art = forschung.IsErforscht(39) ? 7 : 0; break; // Motion
+                    }
+                    cw.art              = art;
+                    cw.angenommen       = false;
+                    cw.wochenAlsAngebot = 0;
+
+                    // ---- Contract subtype (typ) -------------------------------
+                    if (art != 5 && art != 6)
+                        cw.typ = tS.GetRandomContractNumber(art);
+
+                    // ---- Points (effort / size) -------------------------------
+                    int repBonus = Mathf.RoundToInt(mS.auftragsAnsehen * 5f);
+                    cw.points = 20 * URandom.Range(10, 30 + repBonus);
+
+                    // ---- Payment / Penalty ------------------------------------
+                    cw.gehalt = Mathf.RoundToInt(cw.points * URandom.Range(10f, 40f));
+                    cw.strafe = Mathf.RoundToInt(URandom.Range(cw.gehalt * 0.7f, cw.gehalt * 1.8f));
+
+                    // ---- Publisher assignment (via cached MethodInfo) ----------
+                    cw.auftraggeberID = (int)_mGetPublisher.Invoke(__instance, _noArgs);
+
+                    // ---- Special: subtype 25 requires Unlock 31 ---------------
+                    if (cw.typ == 25 && !unlock.Get(31))
+                        cw.typ = 6;
+
+                    // ---- Type-specific point adjustment -----------------------
+                    switch (art)
+                    {
+                        case 1: cw.points *= 0.8f; break;                          // QA
+                        case 2: cw.points *= 0.6f; break;                          // Graphics
+                        case 3: cw.points *= 0.4f; break;                          // Sound
+                        case 4: cw.points *= 0.3f; break;                          // Hardware
+                        case 5:                                                     // Production
+                            cw.points *= 1000f;
+                            cw.points  = (Mathf.RoundToInt(cw.points) / 100) * 100;
+                            break;
+                        case 6: cw.points *= 0.8f; break;                          // Workshop
+                        case 7:                                                     // Motion
+                            cw.points *= 0.8f;
+                            cw.points *= __instance.pointsRegulator;
+                            break;
+                    }
+
+                    // ---- Deadline (weeks) -------------------------------------
+                    if (art != 5)
+                        cw.zeitInWochen = Mathf.RoundToInt(cw.points / 50f    + URandom.Range(5, 10));
+                    else
+                        cw.zeitInWochen = Mathf.RoundToInt(cw.points / 20000f + URandom.Range(5, 10));
+
+                    // ---- No publisher -> discard, otherwise init --------------
+                    if (cw.auftraggeberID == -1)
+                    {
+                        cw.gameObject.SetActive(false);
+                        UnityEngine.Object.Destroy(cw.gameObject);
+                    }
+                    else
+                    {
+                        cw.Init();
+                        spawned++;
+                    }
+                }
+
+                if (spawned > 0)
+                    Plugin.Logger.LogDebug($"SpawnExtra: {spawned} additional contracts created.");
             }
-
-            // Cache the method reference for GetRandomPublisherID (avoid repeated reflection)
-            var getPublisher = tv.Method("GetRandomPublisherID");
-
-            // Get current contract count once, then track via spawned counter
-            int currentCount = GameObject.FindGameObjectsWithTag("ContractWork").Length;
-            int maxContracts = Plugin.MaxContracts.Value;
-
-            int spawned = 0;
-            for (int i = 0; i < extra; i++)
+            catch (Exception ex)
             {
-                // Check against max (account for contracts spawned in this loop)
-                if (currentCount + spawned >= maxContracts) break;
-
-                // ---- Create new contractWork object -----------------------
-                contractWork cw = __instance.CreateContractWork();
-                if (cw == null) continue;
-
-                // ---- Unique random ID -------------------------------------
-                cw.myID = URandom.Range(1, 999999999);
-
-                // ---- Determine contract type (art) ------------------------
-                // Vanilla: URandom.Range(0, 8) -> check if type is unlocked
-                // Falls back to 0 (Development) if not unlocked
-                int art = 0;
-                switch (URandom.Range(0, 8))
-                {
-                    case 0: art = 0; break;
-                    case 1: art = forschung.IsErforscht(28) ? 1 : 0; break; // QA
-                    case 2: art = forschung.IsErforscht(31) ? 2 : 0; break; // Graphics
-                    case 3: art = forschung.IsErforscht(32) ? 3 : 0; break; // Sound
-                    case 4: art = unlock.Get(8)             ? 4 : 0; break; // Hardware
-                    case 5: art = forschung.IsErforscht(33) ? 5 : 0; break; // Production
-                    case 6: art = forschung.IsErforscht(38) ? 6 : 0; break; // Workshop
-                    case 7: art = forschung.IsErforscht(39) ? 7 : 0; break; // Motion
-                }
-                cw.art              = art;
-                cw.angenommen       = false;
-                cw.wochenAlsAngebot = 0;
-
-                // ---- Contract subtype (typ) -------------------------------
-                // Production (5) and Workshop (6) have no randomized subtype
-                if (art != 5 && art != 6)
-                    cw.typ = tS.GetRandomContractNumber(art);
-
-                // ---- Points (effort / size) -------------------------------
-                // Vanilla: 20 * Random.Range(10, 30 + RoundToInt(reputation * 5))
-                int repBonus = Mathf.RoundToInt(mS.auftragsAnsehen * 5f);
-                cw.points = 20 * URandom.Range(10, 30 + repBonus);
-
-                // ---- Payment calculation ----------------------------------
-                cw.gehalt = Mathf.RoundToInt(cw.points * URandom.Range(10f, 40f));
-
-                // ---- Penalty calculation ----------------------------------
-                cw.strafe = Mathf.RoundToInt(URandom.Range(cw.gehalt * 0.7f, cw.gehalt * 1.8f));
-
-                // ---- Publisher assignment ---------------------------------
-                cw.auftraggeberID = getPublisher.GetValue<int>();
-
-                // ---- Special: subtype 25 requires Unlock 31 ---------------
-                if (cw.typ == 25 && !unlock.Get(31))
-                    cw.typ = 6;
-
-                // ---- Type-specific point adjustment -----------------------
-                switch (art)
-                {
-                    case 1: // QA
-                        cw.points *= 0.8f;
-                        break;
-                    case 2: // Graphics
-                        cw.points *= 0.6f;
-                        break;
-                    case 3: // Sound
-                        cw.points *= 0.4f;
-                        break;
-                    case 4: // Hardware
-                        cw.points *= 0.3f;
-                        break;
-                    case 5: // Production (special: large points, rounded to 100)
-                        cw.points *= 1000f;
-                        cw.points  = (Mathf.RoundToInt(cw.points) / 100) * 100;
-                        break;
-                    case 6: // Workshop
-                        cw.points *= 0.8f;
-                        break;
-                    case 7: // Motion / Misc
-                        cw.points *= 0.8f;
-                        cw.points *= __instance.pointsRegulator;
-                        break;
-                    // art 0 (Development): no adjustment
-                }
-
-                // ---- Deadline (weeks) -------------------------------------
-                if (art != 5)
-                    cw.zeitInWochen = Mathf.RoundToInt(cw.points / 50f    + URandom.Range(5, 10));
-                else
-                    cw.zeitInWochen = Mathf.RoundToInt(cw.points / 20000f + URandom.Range(5, 10));
-
-                // ---- No publisher -> discard object, otherwise init -------
-                if (cw.auftraggeberID == -1)
-                {
-                    cw.gameObject.SetActive(false);
-                    UnityEngine.Object.Destroy(cw.gameObject);
-                }
-                else
-                {
-                    cw.Init();
-                    spawned++;
-                }
+                Plugin.Logger.LogError($"SpawnExtra: {ex.Message}");
             }
-
-            if (spawned > 0)
-                Plugin.Logger.LogDebug($"SpawnExtra: {spawned} additional contracts created.");
         }
     }
 
@@ -331,8 +367,16 @@ namespace MoreContractWork
         [HarmonyPostfix]
         public static void Postfix(ref int __result)
         {
-            if (Math.Abs(Plugin.RewardMultiplier.Value - 1.0f) > 0.01f)
-                __result = (int)(__result * Plugin.RewardMultiplier.Value);
+            try
+            {
+                if (!Plugin.Enabled.Value) return;
+                if (Math.Abs(Plugin.RewardMultiplier.Value - 1.0f) > 0.01f)
+                    __result = (int)(__result * Plugin.RewardMultiplier.Value);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger.LogError($"GetGehalt Postfix: {ex.Message}");
+            }
         }
     }
 
@@ -346,8 +390,16 @@ namespace MoreContractWork
         [HarmonyPostfix]
         public static void Postfix(ref int __result)
         {
-            if (Math.Abs(Plugin.PenaltyMultiplier.Value - 1.0f) > 0.01f)
-                __result = (int)(__result * Plugin.PenaltyMultiplier.Value);
+            try
+            {
+                if (!Plugin.Enabled.Value) return;
+                if (Math.Abs(Plugin.PenaltyMultiplier.Value - 1.0f) > 0.01f)
+                    __result = (int)(__result * Plugin.PenaltyMultiplier.Value);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger.LogError($"GetStrafe Postfix: {ex.Message}");
+            }
         }
     }
 }

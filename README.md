@@ -7,6 +7,7 @@ A BepInEx plugin for **Mad Games Tycoon 2** that allows multiple contract work o
 - Spawn multiple contract work offers per in-game week (configurable)
 - Raise the maximum number of active offers on the board
 - Adjust the spawn threshold, offer lifetime, reward multiplier, and penalty multiplier
+- Enable/disable toggle without uninstalling
 - Covers all studio types:
   - Development
   - Quality Assurance
@@ -37,6 +38,7 @@ All options are available in `BepInEx/config/tobi.Mad_Games_Tycoon_2.plugins.Mor
 
 | Key | Default | Description |
 |---|---|---|
+| `Enabled` | true | Enable or disable the mod entirely (reverts to vanilla behavior when off) |
 | `Max Active Contracts` | 40 | Maximum number of contract offers on the board at once |
 | `Contracts Per Week` | 5 | How many new contracts can spawn per in-game week |
 | `Spawn Threshold` | 40 | Reputation score required before contracts begin spawning |
@@ -70,6 +72,8 @@ The compiled DLL is automatically copied to `BepInEx/plugins/MoreContractWork/` 
 ## How It Works
 
 Vanilla `contractWorkMain.UpdateContractWork()` is called once per in-game week and creates **at most one** new contract offer per call. This plugin adds a Postfix patch that spawns up to `ContractsPerWeek - 1` additional contracts after the vanilla call, replicating the exact initialization logic from the original method (including research unlock checks for each studio type).
+
+All internal field access uses cached `FieldInfo`/`MethodInfo` (resolved once at startup) instead of per-call Traverse lookups for minimal performance impact.
 
 ## License
 

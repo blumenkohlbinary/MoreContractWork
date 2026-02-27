@@ -5,10 +5,11 @@
     <AssemblyName>MoreContractWork</AssemblyName>
     <RootNamespace>MoreContractWork</RootNamespace>
     <Description>Mehr Auftragsarbeit fuer Mad Games Tycoon 2 – konfigurierbare Limits und Verguetung</Description>
-    <Version>1.0.0</Version>
+    <Version>1.3.0</Version>
     <!-- BepInEx erwartet AnyCPU, auch wenn das Spiel x64 ist -->
     <PlatformTarget>AnyCPU</PlatformTarget>
     <Optimize>true</Optimize>
+    <LangVersion>latest</LangVersion>
     <!-- Kein CopyLocal fuer Referenzen – Plugin-DLL muss schlank bleiben -->
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <!-- Ausgabepfad: bin/Release/net46/ -->
